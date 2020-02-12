@@ -10,6 +10,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"strconv"
+
+	"github.com/go-logr/logr"
 )
 
 var (
@@ -118,6 +122,7 @@ type Watcher struct {
 	Closed chan struct{}
 	close  chan struct{}
 	wg     *sync.WaitGroup
+	logger logr.Logger
 
 	// mu protects the following.
 	mu           *sync.Mutex
@@ -132,7 +137,7 @@ type Watcher struct {
 }
 
 // New creates a new Watcher.
-func New() *Watcher {
+func New(logger logr.Logger) *Watcher {
 	// Set up the WaitGroup for w.Wait().
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -144,6 +149,7 @@ func New() *Watcher {
 		close:   make(chan struct{}),
 		mu:      new(sync.Mutex),
 		wg:      &wg,
+		logger:  logger,
 		files:   make(map[string]os.FileInfo),
 		ignored: make(map[string]struct{}),
 		names:   make(map[string]bool),
@@ -187,6 +193,8 @@ func (w *Watcher) FilterOps(ops ...Op) {
 
 // Add adds either a single file or directory to the file list.
 func (w *Watcher) Add(name string) (err error) {
+	w.logger.Info("Adding " + name + " to the file list")
+
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -278,6 +286,7 @@ outer:
 
 // AddRecursive adds either a single file or directory recursively to the file list.
 func (w *Watcher) AddRecursive(name string) (err error) {
+	w.logger.Info("Recursively adding " + name)
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -291,6 +300,7 @@ func (w *Watcher) AddRecursive(name string) (err error) {
 		return err
 	}
 	for k, v := range fileList {
+		w.logger.Info("Adding " + v.Name() + " to the file list")
 		w.files[k] = v
 	}
 
@@ -341,6 +351,8 @@ func (w *Watcher) listRecursive(name string) (map[string]os.FileInfo, error) {
 
 // Remove removes either a single file or directory from the file's list.
 func (w *Watcher) Remove(name string) (err error) {
+	w.logger.Info("Remove " + name + " from the file list")
+
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -377,6 +389,7 @@ func (w *Watcher) Remove(name string) (err error) {
 // RemoveRecursive removes either a single file or a directory recursively from
 // the file's list.
 func (w *Watcher) RemoveRecursive(name string) (err error) {
+	w.logger.Info("Recursively removing " + name)
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -533,6 +546,8 @@ func (w *Watcher) retrieveFileList() map[string]os.FileInfo {
 // Start begins the polling cycle which repeats every specified
 // duration until Close is called.
 func (w *Watcher) Start(d time.Duration) error {
+	w.logger.Info("Start watcher")
+
 	// Return an error if d is less than 1 nanosecond.
 	if d < time.Nanosecond {
 		return ErrDurationTooShort
@@ -621,6 +636,7 @@ func (w *Watcher) pollEvents(files map[string]os.FileInfo, evt chan Event,
 	// Check for removed files.
 	for path, info := range w.files {
 		if _, found := files[path]; !found {
+			w.logger.Info("Removed file: " + path)
 			removes[path] = info
 		}
 	}
@@ -629,6 +645,7 @@ func (w *Watcher) pollEvents(files map[string]os.FileInfo, evt chan Event,
 	for path, info := range files {
 		oldInfo, found := w.files[path]
 		if !found {
+			w.logger.Info("Created file: " + path)
 			// A file was created.
 			creates[path] = info
 			continue
@@ -652,6 +669,14 @@ func (w *Watcher) pollEvents(files map[string]os.FileInfo, evt chan Event,
 	// Check for renames and moves.
 	for path1, info1 := range removes {
 		for path2, info2 := range creates {
+			w.logger.Info("Comparing: " + path1 + " " + path2)
+			w.logger.Info(filepath.Dir(path1), filepath.Dir(path2))
+			w.logger.Info(info1.Name(), info2.Name())
+			w.logger.Info(info1.ModTime().String(), info2.ModTime().String())
+			w.logger.Info(info1.Mode().String(), info2.Mode().String())
+			w.logger.Info(strconv.FormatInt(info1.Size(), 10), strconv.FormatInt(info2.Size(), 10))
+			w.logger.Info("Same file: " + strconv.FormatBool(sameFile(info1, info2)))
+
 			if sameFile(info1, info2) {
 				e := Event{
 					Op:       Move,
@@ -664,6 +689,8 @@ func (w *Watcher) pollEvents(files map[string]os.FileInfo, evt chan Event,
 				if filepath.Dir(path1) == filepath.Dir(path2) {
 					e.Op = Rename
 				}
+
+				w.logger.Info(e.Op.String() + " for file: " + info1.Name())
 
 				delete(removes, path1)
 				delete(creates, path2)
@@ -701,6 +728,8 @@ func (w *Watcher) Wait() {
 
 // Close stops a Watcher and unlocks its mutex, then sends a close signal.
 func (w *Watcher) Close() {
+	w.logger.Info("Closing file watcher")
+
 	w.mu.Lock()
 	if !w.running {
 		w.mu.Unlock()
