@@ -666,6 +666,20 @@ func (w *Watcher) pollEvents(files map[string]os.FileInfo, evt chan Event,
 		}
 	}
 
+	if len(removes) != 0 {
+		w.logger.Info("Remove actions: ")
+		for file_path, info := range removes {
+			w.logger.Info(info.Name() + "(" + file_path + ")")
+		}
+	}
+
+	if len(creates) != 0 {
+		w.logger.Info("Create actions: ")
+		for file_path, info := range creates {
+			w.logger.Info(info.Name() + "(" + file_path + ")")
+		}
+	}
+
 	// Check for renames and moves.
 	for path1, info1 := range removes {
 		for path2, info2 := range creates {
